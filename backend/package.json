@@ -1,0 +1,31 @@
+{
+  "name": "freshguard-ai-backend",
+  "version": "1.0.0",
+  "description": "Local API backend for FreshGuard AI",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "init-db": "node scripts/init-db.js",
+    "simulate:cv": "node scripts/simulate-cv.js",
+    "simulate:agent": "node scripts/simulate-agent.js",
+    "test:all": "node scripts/run-tests.js",
+    "simulate:mobile": "node scripts/simulate-mobile.js",
+    "verify:ingest": "node scripts/verify-ingest.js",
+    "clean:test": "node scripts/clean-test-data.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.3",
+    "morgan": "^1.12.1",
+    "multer": "^2.5.0",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.7.0",
+    "yamljs": "^0.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

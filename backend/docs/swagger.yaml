@@ -1,0 +1,406 @@
+openapi: 3.0.3
+info:
+  title: FreshGuard AI API
+  version: 1.0.0
+  description: Local conveyor inspection and production quality API.
+servers:
+  - url: http://localhost:3000
+tags:
+  - name: Health
+  - name: Ingest
+  - name: Supervisor
+  - name: Quality
+  - name: Manager
+  - name: Internal
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Check server and database health
+      responses:
+        '200':
+          description: Server and table row counts
+          content:
+            application/json:
+              example:
+                status: ok
+                database: connected
+                counts: { batches: 1, inspections: 50, alerts: 1, production_records: 2, waste_records: 1, costs: 1, revenue: 1, agent_logs: 0 }
+  /api/ingest/inspection:
+    post:
+      tags: [Ingest]
+      summary: Save one inspection (JSON or multipart form)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { product_type: tomato, status: defective, confidence: 0.94, defect_type: rotten, line_id: 1, captured_at: '2026-10-30T08:00:00.000Z', size_category: medium, needs_review: false, model_version: v1.0 }
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                product_type: { type: string }
+                status: { type: string, enum: [good, defective] }
+                confidence: { type: number }
+                defect_type: { type: string }
+                line_id: { type: integer, minimum: 1 }
+                captured_at: { type: string }
+                batch_id: { type: integer }
+                size_category: { type: string, enum: [small, medium, large] }
+                needs_review: { type: boolean, description: Multipart fields may use true, false, 1, or 0 }
+                model_version: { type: string, maxLength: 50 }
+                image: { type: string, format: binary }
+            example:
+              product_type: tomato
+              status: defective
+              confidence: 0.94
+              defect_type: rotten
+              line_id: 1
+              captured_at: '2026-10-30T08:00:00.000Z'
+              size_category: medium
+              needs_review: false
+              model_version: v1.0
+      responses:
+        '201':
+          description: Inspection saved
+          content:
+            application/json:
+              example: { id: 51 }
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/ingest/inspections/batch:
+    post:
+      tags: [Ingest]
+      summary: Save a JSON array of inspections
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              - { product_type: apple, status: good, confidence: 0.99, line_id: 1, captured_at: '2026-10-30T08:00:00.000Z', size_category: small, needs_review: true, model_version: v1.0 }
+              - { product_type: potato, status: defective, confidence: 0.9, defect_type: bruised, line_id: 1, captured_at: '2026-10-30T08:00:01.000Z', size_category: large, needs_review: false, model_version: v1.0 }
+      responses:
+        '201':
+          description: Inspections saved
+          content:
+            application/json:
+              example: { ids: [52, 53], count: 2 }
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/supervisor/inspections:
+    get:
+      tags: [Supervisor]
+      summary: Get the latest inspections
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 100 } }
+        - { in: query, name: line_id, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Inspections
+          content:
+            application/json:
+              example:
+                inspections:
+                  - { id: 51, batch_id: 1, product_type: tomato, status: defective, confidence: 0.94, defect_type: rotten, line_id: 1, image_path: null, captured_at: '2026-10-30T08:00:00.000Z', size_category: medium, needs_review: false, model_version: v1.0 }
+  /api/supervisor/current-batch:
+    get:
+      tags: [Supervisor]
+      summary: Get stats for the open batch
+      parameters:
+        - { in: query, name: line_id, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Current batch stats
+          content:
+            application/json:
+              example: { batch: { id: 1, name: Batch 1, status: open }, total: 50, good: 40, defective: 10, defect_rate: 0.2 }
+  /api/supervisor/alerts:
+    get:
+      tags: [Supervisor]
+      summary: Get alerts, optionally unread only
+      parameters:
+        - { in: query, name: unread, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Alert list
+          content:
+            application/json:
+              example:
+                alerts:
+                  - { id: 2, batch_id: 1, type: needs_review, message: 'Inspection #51 (tomato) requires review.', defect_rate: null, is_read: 0, created_at: '2026-10-30T08:00:00.000Z' }
+                  - { id: 3, batch_id: 1, type: defect_rate, message: 'Batch 1 defect rate is 25.0%.', defect_rate: 0.25, is_read: 0, created_at: '2026-10-30T08:01:00.000Z' }
+  /api/quality/defects:
+    get:
+      tags: [Quality]
+      summary: List defective inspections with image URLs
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - { in: query, name: product_type, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, default: 100 } }
+      responses:
+        '200':
+          description: Defect list
+          content:
+            application/json:
+              example:
+                defects:
+                  - { id: 51, product_type: tomato, status: defective, defect_type: rotten, image_path: /uploads/image.jpg, image_url: 'http://localhost:3000/uploads/image.jpg', captured_at: '2026-10-30T08:00:00.000Z', size_category: medium, needs_review: false, model_version: v1.0 }
+  /api/quality/needs-review:
+    get:
+      tags: [Quality]
+      summary: List inspections flagged for manual review
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, default: 100 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Flagged inspections, newest first
+          content:
+            application/json:
+              example:
+                inspections:
+                  - { id: 51, batch_id: 1, product_type: tomato, status: good, confidence: 0.94, defect_type: null, line_id: 1, image_path: null, captured_at: '2026-10-30T08:00:00.000Z', size_category: medium, needs_review: true, model_version: v1.0, image_url: null }
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/quality/alerts:
+    get:
+      tags: [Quality]
+      summary: List all alerts, including needs_review alerts for flagged inspections
+      responses:
+        '200':
+          description: Alert list
+          content:
+            application/json:
+              example:
+                alerts:
+                  - { id: 2, batch_id: 1, type: needs_review, message: 'Inspection #51 (tomato) requires review.', defect_rate: null, is_read: 0 }
+                  - { id: 3, batch_id: 1, type: defect_rate, message: 'Batch 1 defect rate is 25.0%.', defect_rate: 0.25, is_read: 0 }
+  /api/quality/alerts/{id}/read:
+    patch:
+      tags: [Quality]
+      summary: Mark an alert as read
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Alert updated
+          content:
+            application/json:
+              example: { id: 2, is_read: true }
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/quality/stats/defects-by-type:
+    get:
+      tags: [Quality]
+      summary: Count defective inspections grouped by defect type
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Defect counts
+          content:
+            application/json:
+              example: { defects_by_type: [{ defect_type: rotten, count: 12 }, { defect_type: bruised, count: 4 }] }
+  /api/quality/inspections/{id}:
+    get:
+      tags: [Quality]
+      summary: Get one inspection
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Inspection
+          content:
+            application/json:
+              example:
+                inspection: { id: 51, batch_id: 1, product_type: tomato, status: defective, confidence: 0.94, defect_type: rotten, line_id: 1, image_path: null, image_url: null, captured_at: '2026-10-30T08:00:00.000Z', size_category: medium, needs_review: false, model_version: v1.0 }
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/manager/summary:
+    get:
+      tags: [Manager]
+      summary: Get production, waste, costs, and revenue totals
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Summary totals
+          content:
+            application/json:
+              example: { total_production: 1000, total_waste: 40, waste_percent: 4, costs: 500, revenue: 900, net_profit: 400 }
+  /api/manager/daily-report:
+    get:
+      tags: [Manager]
+      summary: Get business totals for a date
+      parameters:
+        - { in: query, name: date, required: true, schema: { type: string, format: date, example: '2026-10-30' } }
+      responses:
+        '200':
+          description: Daily report
+          content:
+            application/json:
+              example: { date: '2026-10-30', total_production: 1000, total_waste: 40, waste_percent: 4, costs: 500, revenue: 900, net_profit: 400 }
+  /api/manager/trends:
+    get:
+      tags: [Manager]
+      summary: Get daily production, waste, and profit for recent days
+      parameters:
+        - { in: query, name: days, schema: { type: integer, default: 7, maximum: 365 } }
+      responses:
+        '200':
+          description: Daily trend rows
+          content:
+            application/json:
+              example: { trends: [{ date: '2026-10-30', production: 100, waste: 5, profit: 40 }] }
+  /api/manager/production:
+    post:
+      tags: [Manager]
+      summary: Record production quantity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { batch_id: 1, quantity: 100, recorded_at: '2026-10-30T08:00:00.000Z' }
+      responses:
+        '201':
+          description: Record created
+          content:
+            application/json:
+              example: { id: 3 }
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/manager/waste:
+    post:
+      tags: [Manager]
+      summary: Record waste quantity and reason
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { batch_id: 1, quantity: 5, reason: defective, recorded_at: '2026-10-30T08:00:00.000Z' }
+      responses:
+        '201':
+          description: Record created
+          content:
+            application/json:
+              example: { id: 4 }
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/manager/costs:
+    post:
+      tags: [Manager]
+      summary: Record a cost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { batch_id: 1, amount: 25.5, category: packaging, recorded_at: '2026-10-30T08:00:00.000Z' }
+      responses:
+        '201':
+          description: Record created
+          content:
+            application/json:
+              example: { id: 5 }
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/manager/revenue:
+    post:
+      tags: [Manager]
+      summary: Record revenue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { batch_id: 1, amount: 250, recorded_at: '2026-10-30T08:00:00.000Z' }
+      responses:
+        '201':
+          description: Record created
+          content:
+            application/json:
+              example: { id: 6 }
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/internal/overview:
+    get:
+      tags: [Internal]
+      summary: Get a compact system summary for the AI agent
+      responses:
+        '200':
+          description: Overview JSON
+          content:
+            application/json:
+              example:
+                counts: { batches: 1, inspections: 50, alerts: 1, production_records: 0, waste_records: 0, costs: 0, revenue: 0, agent_logs: 0 }
+                inspections: { total: 50, defective: 10 }
+                latest_alerts: []
+                open_batch: { id: 1, status: open }
+  /api/internal/query/inspections:
+    get:
+      tags: [Internal]
+      summary: Query inspections with optional filters
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - { in: query, name: product_type, schema: { type: string } }
+        - { in: query, name: line_id, schema: { type: integer, minimum: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 100 } }
+      responses:
+        '200':
+          description: Matching inspections
+          content:
+            application/json:
+              example: { inspections: [{ id: 51, status: good, product_type: apple, line_id: 1, size_category: small, needs_review: false, model_version: v1.0 }] }
+  /api/internal/query/stats:
+    get:
+      tags: [Internal]
+      summary: Get inspection counts and average confidence with filters
+      parameters:
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+        - { in: query, name: product_type, schema: { type: string } }
+        - { in: query, name: line_id, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Filtered statistics
+          content:
+            application/json:
+              example: { total: 50, good: 40, defective: 10, average_confidence: 0.94 }
+  /api/internal/agent/log:
+    post:
+      tags: [Internal]
+      summary: Store an AI agent question and answer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { question: What is the defect rate?, answer: The defect rate is 20 percent. }
+      responses:
+        '201':
+          description: Agent log stored
+          content:
+            application/json:
+              example: { id: 1 }
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/internal/agent/logs:
+    get:
+      tags: [Internal]
+      summary: List recent AI agent logs
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 100 } }
+      responses:
+        '200':
+          description: Agent log records
+          content:
+            application/json:
+              example: { logs: [{ id: 1, question: What is the defect rate?, answer: The defect rate is 20 percent., created_at: '2026-10-30T08:00:00.000Z' }] }
+components:
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          example: { error: Invalid request }
