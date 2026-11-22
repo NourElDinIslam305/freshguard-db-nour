@@ -1,90 +1,225 @@
 
 const db = require('../src/db/connection');
 
-const seedName = 'FreshGuard Demo Batch 001';
+const BATCHES = [
+  { name: 'FreshGuard Demo Batch 001', product: 'Tomato', line: 1, count: 167, defects: 20 },
+  { name: 'FreshGuard Demo Batch 002', product: 'Potato', line: 2, count: 167, defects: 20 },
+  { name: 'FreshGuard Demo Batch 003', product: 'Cucumber', line: 3, count: 166, defects: 20 },
+];
 
-const existing = db
-  .prepare('SELECT id FROM batches WHERE name = ?')
-  .get(seedName);
+const defectTypes = ['Bruise', 'Rot', 'Crack', 'Discoloration'];
+const sizes = ['small', 'medium', 'large'];
+const modelVersion = 'freshguard-v1';
 
-if (existing) {
-  console.log('Demo data already exists. No new data inserted.');
-  db.close();
-  process.exit(0);
+function formatDate(date) {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function randomBetween(min, max) {
+  return Math.random() * (max - min) + min;
+}
+
+function randomItem(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function createInspectionDates(count, start, end) {
+  const dates = [];
+
+  for (let i = 0; i < count; i++) {
+    const timestamp = randomBetween(start.getTime(), end.getTime());
+    dates.push(formatDate(new Date(timestamp)));
+  }
+
+  return dates;
 }
 
 const seed = db.transaction(() => {
-  // 1. Insert demo batch
-  const batch = db.prepare(`
-    INSERT INTO batches (name, product_type, line_id, status)
-    VALUES (?, ?, ?, ?)
-  `).run(seedName, 'Tomato', 1, 'closed');
+  // Remove only previous FreshGuard demo batches and their related records.
+  const oldBatches = db.prepare(`
+    SELECT id FROM batches
+    WHERE name LIKE 'FreshGuard Demo Batch %'
+  `).all();
 
-  const batchId = batch.lastInsertRowid;
+  for (const batch of oldBatches) {
+    const id = batch.id;
 
-  // 2. Insert inspections
-  const inspection = db.prepare(`
-    INSERT INTO inspections
-    (batch_id, product_type, status, confidence, defect_type, line_id)
-    VALUES (?, ?, ?, ?, ?, ?)
+    db.prepare('DELETE FROM inspections WHERE batch_id = ?').run(id);
+    db.prepare('DELETE FROM alerts WHERE batch_id = ?').run(id);
+    db.prepare('DELETE FROM production_records WHERE batch_id = ?').run(id);
+    db.prepare('DELETE FROM waste_records WHERE batch_id = ?').run(id);
+    db.prepare('DELETE FROM costs WHERE batch_id = ?').run(id);
+    db.prepare('DELETE FROM revenue WHERE batch_id = ?').run(id);
+  }
+
+  db.prepare(`
+    DELETE FROM batches
+    WHERE name LIKE 'FreshGuard Demo Batch %'
+  `).run();
+
+  const now = new Date();
+  const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+  const insertBatch = db.prepare(`
+    INSERT INTO batches
+    (name, product_type, line_id, started_at, ended_at, status)
+    VALUES (?, ?, ?, ?, ?, 'closed')
   `);
 
-  inspection.run(batchId, 'Tomato', 'good', 0.98, null, 1);
-  inspection.run(batchId, 'Tomato', 'defective', 0.91, 'Bruise', 1);
-  inspection.run(batchId, 'Tomato', 'good', 0.96, null, 1);
+  const insertInspection = db.prepare(`
+    INSERT INTO inspections
+    (
+      batch_id, product_type, status, confidence,
+      defect_type, line_id, captured_at,
+      size_category, needs_review, model_version
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
-  // 3. Insert alert
-  db.prepare(`
+  const insertAlert = db.prepare(`
     INSERT INTO alerts (batch_id, type, message, defect_rate)
     VALUES (?, ?, ?, ?)
-  `).run(
-    batchId,
-    'quality',
-    'Defect detected in production batch',
-    0.33
-  );
+  `);
 
-  // 4. Insert production record
-  db.prepare(`
+  const insertProduction = db.prepare(`
     INSERT INTO production_records (batch_id, quantity)
     VALUES (?, ?)
-  `).run(batchId, 100);
+  `);
 
-  // 5. Insert waste record
-  db.prepare(`
+  const insertWaste = db.prepare(`
     INSERT INTO waste_records (batch_id, quantity, reason)
     VALUES (?, ?, ?)
-  `).run(batchId, 10, 'Damaged products');
+  `);
 
-  // 6. Insert cost
-  db.prepare(`
+  const insertCost = db.prepare(`
     INSERT INTO costs (batch_id, amount, category)
     VALUES (?, ?, ?)
-  `).run(batchId, 500, 'Raw materials');
+  `);
 
-  // 7. Insert revenue
-  db.prepare(`
+  const insertRevenue = db.prepare(`
     INSERT INTO revenue (batch_id, amount)
     VALUES (?, ?)
-  `).run(batchId, 900);
+  `);
 
-  // 8. Insert agent log
-  db.prepare(`
-    INSERT INTO agent_logs (question, answer)
-    VALUES (?, ?)
-  `).run(
-    'What is the batch defect rate?',
-    '1 out of 3 inspections is defective.'
-  );
+  let totalInspections = 0;
+  let totalDefects = 0;
 
-  return batchId;
+  BATCHES.forEach((config, index) => {
+    const periodStart = new Date(
+      fourteenDaysAgo.getTime() +
+      (14 * 24 * 60 * 60 * 1000 * index) / 3
+    );
+
+    const periodEnd = new Date(
+      fourteenDaysAgo.getTime() +
+      (14 * 24 * 60 * 60 * 1000 * (index + 1)) / 3
+    );
+
+    if (index === BATCHES.length - 1) {
+      periodEnd.setTime(now.getTime());
+    }
+
+    const batchResult = insertBatch.run(
+      config.name,
+      config.product,
+      config.line,
+      formatDate(periodStart),
+      formatDate(periodEnd)
+    );
+
+    const batchId = batchResult.lastInsertRowid;
+
+    // Create exactly the required number of defective inspections.
+    const statuses = [
+      ...Array(config.defects).fill('defective'),
+      ...Array(config.count - config.defects).fill('good'),
+    ];
+
+    // Shuffle inspection statuses.
+    for (let i = statuses.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [statuses[i], statuses[j]] = [statuses[j], statuses[i]];
+    }
+
+    const dates = createInspectionDates(
+      config.count,
+      periodStart,
+      periodEnd
+    );
+
+    for (let i = 0; i < config.count; i++) {
+      const status = statuses[i];
+      const defective = status === 'defective';
+
+      insertInspection.run(
+        batchId,
+        config.product,
+        status,
+        defective ? randomBetween(0.80, 0.95) : randomBetween(0.95, 0.999),
+        defective ? randomItem(defectTypes) : null,
+        config.line,
+        dates[i],
+        randomItem(sizes),
+        defective && Math.random() < 0.5 ? 1 : 0,
+        modelVersion
+      );
+    }
+
+    const defectRate = config.defects / config.count;
+    const goodProducts = config.count - config.defects;
+
+    insertAlert.run(
+      batchId,
+      'quality',
+      `Quality alert: ${config.defects} defective products detected in ${config.name}`,
+      defectRate
+    );
+
+    insertProduction.run(batchId, config.count);
+
+    insertWaste.run(
+      batchId,
+      config.defects,
+      'Damaged or defective products'
+    );
+
+    insertCost.run(
+      batchId,
+      config.count * 4.5,
+      'Raw materials'
+    );
+
+    insertCost.run(
+      batchId,
+      config.count * 1.5,
+      'Operations'
+    );
+
+    insertRevenue.run(
+      batchId,
+      goodProducts * 10
+    );
+
+    totalInspections += config.count;
+    totalDefects += config.defects;
+  });
+
+  return {
+    batches: BATCHES.length,
+    inspections: totalInspections,
+    defective: totalDefects,
+    defectRate: (totalDefects / totalInspections) * 100,
+  };
 });
 
 try {
-  const batchId = seed();
+  const result = seed();
 
   console.log('Seed completed successfully.');
-  console.log('Demo batch ID:', batchId);
+  console.log('Batches:', result.batches);
+  console.log('Total inspections:', result.inspections);
+  console.log('Defective inspections:', result.defective);
+  console.log('Defect rate:', result.defectRate.toFixed(2) + '%');
 
 } catch (error) {
   console.error('Seed failed:', error.message);
@@ -93,4 +228,3 @@ try {
 } finally {
   db.close();
 }
-

@@ -81,3 +81,27 @@ CREATE TABLE IF NOT EXISTS agent_logs (
 CREATE INDEX IF NOT EXISTS idx_insp_batch    ON inspections(batch_id);
 CREATE INDEX IF NOT EXISTS idx_insp_captured ON inspections(captured_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_read   ON alerts(is_read);
+
+-- Performance indexes for inspection reports
+CREATE INDEX IF NOT EXISTS idx_insp_captured_status
+ON inspections(captured_at, status);
+
+CREATE INDEX IF NOT EXISTS idx_insp_defect_type
+ON inspections(defect_type)
+WHERE status = 'defective';
+
+-- Foreign key and batch aggregation indexes
+CREATE INDEX IF NOT EXISTS idx_alerts_batch
+ON alerts(batch_id);
+
+CREATE INDEX IF NOT EXISTS idx_production_batch
+ON production_records(batch_id);
+
+CREATE INDEX IF NOT EXISTS idx_waste_batch
+ON waste_records(batch_id);
+
+CREATE INDEX IF NOT EXISTS idx_costs_batch
+ON costs(batch_id);
+
+CREATE INDEX IF NOT EXISTS idx_revenue_batch
+ON revenue(batch_id);
